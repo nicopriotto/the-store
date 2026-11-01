@@ -1,0 +1,135 @@
+# Los bloques van en el orden del pipeline: lectura y sobre CRI, metadata,
+# parseo por servicio según el tag, normalización y envío.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluentd-config
+  namespace: logging
+data:
+  fluent.conf: |
+    # 0. Monitoreo: /api/plugins.json en el 24220, para la liveness
+    <source>
+      @type monitor_agent
+      bind 0.0.0.0
+      port 24220
+    </source>
+
+    # 1. Lectura: archivos de the-store e ingress-nginx; el sobre CRI se separa acá
+    <source>
+      @type tail
+      @id in_tail_containers
+      path /var/log/containers/*_the-store_*.log,/var/log/containers/*_ingress-nginx_*.log
+      pos_file /var/log/fluentd-containers.log.pos
+      tag kube.*
+      read_from_head true
+      <parse>
+        @type regexp
+        expression /^(?<time>[^ ]+) (?<stream>stdout|stderr) (?<logtag>[FP]) (?<message>.*)$/
+        time_format %Y-%m-%dT%H:%M:%S.%N%:z
+      </parse>
+    </source>
+
+    # 1b. Líneas largas: containerd parte cada línea de más de 16 KB en trozos
+    #     con marca P y cierra con F (pasa con los stack traces de ui en JSON);
+    #     se rearman antes de parsear
+    <filter kube.**>
+      @type concat
+      key message
+      use_partial_cri_logtag true
+      partial_cri_logtag_key logtag
+      partial_cri_stream_key stream
+      separator ""
+    </filter>
+
+    # 2. Enriquecimiento: namespace, pod, contenedor, nodo y labels
+    <filter kube.**>
+      @type kubernetes_metadata
+      @id filter_kube_metadata
+    </filter>
+
+    # 3a. JSON en origen: servicios Java (ECS) e ingress-nginx
+    <filter kube.var.log.containers.ui-*.log kube.var.log.containers.carts-*.log kube.var.log.containers.orders-*.log kube.var.log.containers.ingress-nginx-controller-*.log>
+      @type parser
+      key_name message
+      reserve_data true
+      reserve_time true
+      remove_key_name_field true
+      emit_invalid_record_to_error false
+      <parse>
+        @type json
+      </parse>
+    </filter>
+
+    # 3b. catalog (gin): [GIN] fecha | status | latencia | ip | MÉTODO "ruta"
+    <filter kube.var.log.containers.catalog-*.log>
+      @type parser
+      key_name message
+      reserve_data true
+      reserve_time true
+      emit_invalid_record_to_error false
+      <parse>
+        @type regexp
+        expression /^\[GIN\] [^|]+\|\s*(?<status_code>\d{3})\s*\|\s*(?<latency>\S+)\s*\|\s*(?<client_ip>\S+)\s*\|\s*(?<method>[A-Z]+)\s+"(?<path>[^"]*)"/
+        types status_code:integer
+      </parse>
+    </filter>
+
+    # 3c. checkout (NestJS): nivel y contexto; si es del middleware HTTP, método, ruta y status
+    <filter kube.var.log.containers.checkout-*.log>
+      @type parser
+      key_name message
+      reserve_data true
+      reserve_time true
+      emit_invalid_record_to_error false
+      <parse>
+        @type regexp
+        expression /^\[Nest\] \d+\s+-\s+.+?\s+(?<level>LOG|ERROR|WARN|DEBUG|VERBOSE|FATAL) \[(?<context>[^\]]+)\] (?<message>.*)$/
+      </parse>
+    </filter>
+    <filter kube.var.log.containers.checkout-*.log>
+      @type parser
+      key_name message
+      reserve_data true
+      reserve_time true
+      emit_invalid_record_to_error false
+      <parse>
+        @type regexp
+        expression /^(?<method>[A-Z]+) (?<path>\S+) (?<status_code>\d{3}) /
+        types status_code:integer
+      </parse>
+    </filter>
+
+    # 4. Normalización: app y level comunes a todos los servicios
+    <filter kube.**>
+      @type record_transformer
+      enable_ruby true
+      <record>
+        app ${a = record.dig("kubernetes", "container_name") || tag.split('.')[4].split('_')[2].split('-')[0]; a == "controller" ? "ingress-nginx" : a}
+        level ${l = (record["log"].is_a?(Hash) ? record["log"]["level"] : nil) || record["level"]; l ||= (record["status_code"].to_i >= 500 ? "ERROR" : "INFO"); l = l.to_s.upcase; l == "LOG" ? "INFO" : l}
+      </record>
+    </filter>
+
+    # 5. Envío: Bulk API, índice por día, buffer en disco y reintentos sin descartar
+    <match kube.**>
+      @type elasticsearch
+      @id out_es
+      host elasticsearch.logging.svc.cluster.local
+      port 9200
+      scheme http
+      user fluentd
+      password "#{ENV['FLUENTD_ES_PASSWORD']}"
+      logstash_format true
+      logstash_prefix k8s-logs
+      suppress_type_name true
+      <buffer>
+        @type file
+        path /var/log/fluentd-buffers/es.buffer
+        flush_mode interval
+        flush_interval 5s
+        retry_type exponential_backoff
+        retry_max_interval 30s
+        retry_forever true
+        total_limit_size 512MB
+        overflow_action block
+      </buffer>
+    </match>

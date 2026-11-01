@@ -1,0 +1,75 @@
+# Un Fluentd por nodo, incluido el control-plane, donde corre el ingress.
+# Monta /var/log entero porque /var/log/containers son symlinks a
+# /var/log/pods; ahí quedan también el pos_file y el buffer.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: fluentd
+  namespace: logging
+  labels:
+    app: fluentd
+spec:
+  selector:
+    matchLabels:
+      app: fluentd
+  template:
+    metadata:
+      labels:
+        app: fluentd
+    spec:
+      serviceAccountName: fluentd
+      tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
+      containers:
+      - name: fluentd
+        image: fluent/fluentd-kubernetes-daemonset:v1.19-debian-elasticsearch8-1
+        # Root para leer los logs del nodo, pero sin capabilities ni escalada
+        securityContext:
+          runAsUser: 0
+          privileged: false
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        env:
+        - name: FLUENTD_ES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: es-credentials
+              key: fluentd
+        - name: K8S_NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        ports:
+        - name: monitor
+          containerPort: 24220
+        livenessProbe:
+          httpGet:
+            path: /api/plugins.json
+            port: 24220
+          initialDelaySeconds: 30
+          periodSeconds: 20
+          failureThreshold: 3
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            memory: 512Mi
+        volumeMounts:
+        - name: varlog
+          mountPath: /var/log
+        # Con subPath el archivo no se actualiza solo: tras editar el
+        # ConfigMap, kubectl -n logging rollout restart ds/fluentd
+        - name: config
+          mountPath: /fluentd/etc/fluent.conf
+          subPath: fluent.conf
+      volumes:
+      - name: varlog
+        hostPath:
+          path: /var/log
+      - name: config
+        configMap:
+          name: fluentd-config
