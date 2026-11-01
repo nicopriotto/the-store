@@ -1,0 +1,101 @@
+# Kibana se conecta con kibana_system: desde la versión 8 rechaza el usuario elastic.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kibana
+  namespace: logging
+  labels:
+    app: kibana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kibana
+  template:
+    metadata:
+      labels:
+        app: kibana
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsNonRoot: true
+      containers:
+      - name: kibana
+        image: docker.elastic.co/kibana/kibana:8.19.7
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        env:
+        - name: ELASTICSEARCH_HOSTS
+          value: http://elasticsearch.logging.svc.cluster.local:9200
+        - name: ELASTICSEARCH_USERNAME
+          value: kibana_system
+        - name: ELASTICSEARCH_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: es-credentials
+              key: kibana_system
+        - name: SERVER_PUBLICBASEURL
+          value: http://kibana.localhost
+        # Sin esta clave, varias APIs internas de Kibana responden 500
+        - name: XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY
+          valueFrom:
+            secretKeyRef:
+              name: es-credentials
+              key: kibana_encryption
+        ports:
+        - name: http
+          containerPort: 5601
+        # /login responde 200 sin credenciales cuando Kibana está listo
+        readinessProbe:
+          httpGet:
+            path: /login
+            port: 5601
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        # Arranca tarde: una liveness temprana lo reiniciaría en loop
+        livenessProbe:
+          tcpSocket:
+            port: 5601
+          initialDelaySeconds: 120
+          periodSeconds: 20
+          failureThreshold: 6
+        resources:
+          requests:
+            cpu: 250m
+            memory: 1Gi
+          limits:
+            memory: 1536Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kibana
+  namespace: logging
+spec:
+  selector:
+    app: kibana
+  ports:
+  - name: http
+    port: 5601
+    targetPort: 5601
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kibana
+  namespace: logging
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: kibana.localhost
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: kibana
+            port:
+              number: 5601
