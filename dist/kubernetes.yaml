@@ -146,6 +146,7 @@ metadata:
   name: carts
 data:
   RETAIL_CART_PERSISTENCE_PROVIDER: in-memory
+  LOGGING_STRUCTURED_FORMAT_CONSOLE: ecs
 ---
 # Source: retail-store-sample-cart-chart/templates/service.yaml
 apiVersion: v1
@@ -285,6 +286,7 @@ metadata:
 data:
   RETAIL_ORDERS_MESSAGING_PROVIDER: in-memory
   RETAIL_ORDERS_PERSISTENCE_PROVIDER: in-memory
+  LOGGING_STRUCTURED_FORMAT_CONSOLE: ecs
 ---
 # Source: retail-store-sample-orders-chart/templates/service.yaml
 apiVersion: v1
@@ -407,6 +409,7 @@ metadata:
   name: checkout
 data:
   RETAIL_CHECKOUT_PERSISTENCE_PROVIDER: in-memory
+  NO_COLOR: "1"
 ---
 # Source: retail-store-sample-checkout-chart/templates/service.yaml
 apiVersion: v1
@@ -528,6 +531,7 @@ data:
   RETAIL_UI_ENDPOINTS_CARTS: http://carts
   RETAIL_UI_ENDPOINTS_CHECKOUT: http://checkout
   RETAIL_UI_ENDPOINTS_ORDERS: http://orders
+  LOGGING_STRUCTURED_FORMAT_CONSOLE: ecs
 ---
 # Source: retail-store-sample-ui-chart/templates/service.yaml
 apiVersion: v1
