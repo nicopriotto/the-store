@@ -1,0 +1,2 @@
+data:
+  log-format-upstream: '{"time":"$time_iso8601","remote_addr":"$remote_addr","method":"$request_method","path":"$uri","status_code":$status,"body_bytes":$body_bytes_sent,"request_time":$request_time,"user_agent":"$http_user_agent","upstream":"$proxy_upstream_name","upstream_addr":"$upstream_addr","upstream_status":"$upstream_status","request_id":"$req_id"}'
