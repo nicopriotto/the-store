@@ -4,6 +4,7 @@ set -e
 # Global configuration
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 SERVICES="catalog cart checkout orders ui"
+LOGGING_DIR="$DIR/logging"
 
 print_status() {
     local BLUE='\033[0;34m'
@@ -53,6 +54,7 @@ create_cluster_and_deploy() {
     build_images
     load_images
     deploy_services
+    if [ "$WITH_LOGGING" = true ]; then install_logging; fi
 
     [ "$SKIP_TESTS" = true ] && print_warning "Tests skipped" || run_e2e_tests
     [ "$SKIP_STATUS" = true ] && print_warning "Status skipped" || show_status
@@ -238,6 +240,79 @@ run_e2e_tests() {
     print_success "E2E tests completed!"
 }
 
+# --- Stack de logs (EFK) ----------------------------------------------------
+
+es_password() {
+    kubectl -n logging get secret es-credentials -o jsonpath='{.data.elastic}' | base64 --decode
+}
+
+install_logging() {
+    print_status "Installing logging stack (EFK)..."
+    kubectl apply -f "$LOGGING_DIR/00-namespace.yaml"
+    kubectl apply -f "$LOGGING_DIR/network/"
+
+    # Solo la primera vez: regenerarlas desincroniza la contraseña de elastic
+    if ! kubectl -n logging get secret es-credentials &> /dev/null; then
+        kubectl -n logging create secret generic es-credentials \
+            --from-literal=elastic="$(openssl rand -hex 12)" \
+            --from-literal=kibana_system="$(openssl rand -hex 12)" \
+            --from-literal=fluentd="$(openssl rand -hex 12)" \
+            --from-literal=kibana_encryption="$(openssl rand -hex 16)"
+    fi
+
+    kubectl apply -f "$LOGGING_DIR/elasticsearch/"
+    kubectl -n logging rollout status statefulset/elasticsearch --timeout=300s
+
+    # El template tiene que existir antes del primer log
+    kubectl -n logging delete job es-setup --ignore-not-found
+    kubectl apply -f "$LOGGING_DIR/setup/"
+    kubectl -n logging wait --for=condition=complete job/es-setup --timeout=300s
+
+    kubectl -n ingress-nginx patch configmap ingress-nginx-controller \
+        --type merge --patch-file "$LOGGING_DIR/ingress-nginx/log-format-patch.yaml"
+
+    kubectl apply -f "$LOGGING_DIR/fluentd/"
+    kubectl -n logging rollout restart daemonset/fluentd   # subPath: no toma solo los cambios del ConfigMap
+    kubectl -n logging rollout status daemonset/fluentd --timeout=300s
+
+    kubectl apply -f "$LOGGING_DIR/kibana/kibana.yaml"
+    kubectl -n logging rollout status deployment/kibana --timeout=600s
+
+    setup_kibana_objects
+    print_success "Kibana: http://kibana.localhost  (user elastic, password: ./local.sh logging-password)"
+}
+
+setup_kibana_objects() {
+    local pw; pw="$(es_password)"
+    local kb=(-s -u "elastic:$pw" -H 'Host: kibana.localhost' -H 'kbn-xsrf: true')
+
+    until curl "${kb[@]}" -o /dev/null -w '%{http_code}' http://localhost/api/status | grep -q 200; do
+        print_status "Waiting for Kibana..."; sleep 5
+    done
+
+    curl "${kb[@]}" -X POST http://localhost/api/data_views/data_view \
+        -H 'Content-Type: application/json' \
+        -d '{"data_view":{"id":"k8s-logs","title":"k8s-logs-*","name":"The Store · logs","timeFieldName":"@timestamp"},"override":true}' > /dev/null
+
+    if [ -f "$LOGGING_DIR/kibana/saved-objects.ndjson" ]; then
+        curl "${kb[@]}" -X POST "http://localhost/api/saved_objects/_import?overwrite=true" \
+            --form file=@"$LOGGING_DIR/kibana/saved-objects.ndjson" > /dev/null
+    fi
+}
+
+uninstall_logging() {
+    print_status "Removing logging stack..."
+    kubectl delete namespace logging --ignore-not-found
+    # El RBAC de Fluentd es de alcance de clúster: no se va con el namespace
+    kubectl delete clusterrolebinding fluentd --ignore-not-found
+    kubectl delete clusterrole fluentd --ignore-not-found
+    print_success "Logging stack removed"
+}
+
+cmd_install_logging()   { check_prerequisites; install_logging; }
+cmd_uninstall_logging() { check_prerequisites; uninstall_logging; }
+cmd_logging_password()  { es_password; echo; }
+
 show_help() {
     echo "Usage: $0 [COMMAND] [OPTIONS]"
     echo ""
@@ -250,12 +325,16 @@ show_help() {
     echo "  reload-images   Build and load Docker images"
     echo "  e2e-test        Run end-to-end tests"
     echo "  load-test       Run load generator tests"
+    echo "  install-logging   Install the EFK logging stack (namespace logging)"
+    echo "  uninstall-logging Remove the EFK logging stack"
+    echo "  logging-password  Print the password of the elastic user"
     echo ""
     echo "OPTIONS:"
     echo "  -c, --cluster NAME   Cluster name (default: the-store)"
     echo "  -n, --namespace NAME Kubernetes namespace (default: the-store)"
     echo "  --skip-tests         Skip running e2e tests when creating/rebuilding cluster"
     echo "  --skip-status        Skip status display when creating/rebuilding cluster"
+    echo "  --with-logging       Install the logging stack after create/rebuild"
     echo "  -h, --help           Show this help"
 }
 
@@ -344,14 +423,16 @@ main() {
     NAMESPACE="the-store"
     SKIP_TESTS=false
     SKIP_STATUS=false
+    WITH_LOGGING=false
 
     while [[ $# -gt 0 ]]; do
         case $1 in
-            help|create-cluster|delete-cluster|rebuild-cluster|status|reload-images|e2e-test|load-test) COMMAND="$1"; shift ;;
+            help|create-cluster|delete-cluster|rebuild-cluster|status|reload-images|e2e-test|load-test|install-logging|uninstall-logging|logging-password) COMMAND="$1"; shift ;;
             -c|--cluster) CLUSTER_NAME="$2"; shift 2 ;;
             -n|--namespace) NAMESPACE="$2"; shift 2 ;;
             --skip-tests) SKIP_TESTS=true; shift ;;
             --skip-status) SKIP_STATUS=true; shift ;;
+            --with-logging) WITH_LOGGING=true; shift ;;
             -h|--help) show_help; exit 0 ;;
             *) echo "Unknown option: $1"; show_help; exit 1 ;;
         esac
@@ -365,6 +446,9 @@ main() {
         reload-images) cmd_reload_images;;
         e2e-test) cmd_e2e_tests;;
         load-test) cmd_load_generator;;
+        install-logging) cmd_install_logging;;
+        uninstall-logging) cmd_uninstall_logging;;
+        logging-password) cmd_logging_password;;
         help) show_help; exit 0;;
         *) print_error "Unknown command: $COMMAND"; show_help; exit 1;;
     esac
