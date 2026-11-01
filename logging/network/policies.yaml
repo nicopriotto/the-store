@@ -1,0 +1,52 @@
+# Solo los clientes previstos llegan a Elasticsearch y a Kibana. La primera
+# política cierra todo el tráfico entrante del namespace; las otras abren lo
+# justo. Las hace cumplir el plugin CNI de cada nodo (kindnet en Kind).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: logging
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress"]
+---
+# Un podSelector sin namespaceSelector solo elige pods de logging
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: elasticsearch-clients
+  namespace: logging
+spec:
+  podSelector:
+    matchLabels:
+      app: elasticsearch
+  policyTypes: ["Ingress"]
+  ingress:
+  - from:
+    - podSelector:
+        matchExpressions:
+        - key: app
+          operator: In
+          values: ["fluentd", "kibana", "es-setup"]
+    ports:
+    - protocol: TCP
+      port: 9200
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kibana-from-ingress
+  namespace: logging
+spec:
+  podSelector:
+    matchLabels:
+      app: kibana
+  policyTypes: ["Ingress"]
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: ingress-nginx
+    ports:
+    - protocol: TCP
+      port: 5601
