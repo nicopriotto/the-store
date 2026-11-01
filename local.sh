@@ -80,6 +80,9 @@ create_cluster() {
         cat <<EOF | kind create cluster --name $CLUSTER_NAME --config -
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
+networking:
+  podSubnet: "10.244.0.0/16"
+  serviceSubnet: "10.96.0.0/16"
 nodes:
 - role: control-plane
   kubeadmConfigPatches:
@@ -95,6 +98,8 @@ nodes:
   - containerPort: 443
     hostPort: 443
     protocol: TCP
+- role: worker
+- role: worker
 EOF
 
         print_success "Cluster created successfully"
@@ -111,11 +116,12 @@ install_ingress() {
     if ! kubectl get namespace ingress-nginx &> /dev/null; then
         print_status "Installing nginx ingress controller..."
         kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.13.1/deploy/static/provider/kind/deploy.yaml
+        # Con workers, el scheduler puede mandarlo a un nodo sin los puertos 80
+        # y 443 mapeados al host: se fija al control-plane (ingress-ready=true)
+        kubectl -n ingress-nginx patch deployment ingress-nginx-controller --type merge \
+            -p '{"spec":{"template":{"spec":{"nodeSelector":{"ingress-ready":"true"}}}}}'
         print_status "Waiting for nginx ingress controller to be ready..."
-        kubectl wait --namespace ingress-nginx \
-            --for=condition=ready pod \
-            --selector=app.kubernetes.io/component=controller \
-            --timeout=300s
+        kubectl -n ingress-nginx rollout status deployment/ingress-nginx-controller --timeout=300s
         print_success "Nginx ingress controller installed"
     else
         print_success "Nginx ingress controller already installed"
