@@ -1,0 +1,27 @@
+# Fluentd y Kibana usan el Service normal; el headless es el que exige el
+# StatefulSet para darle identidad estable al pod.
+apiVersion: v1
+kind: Service
+metadata:
+  name: elasticsearch
+  namespace: logging
+spec:
+  selector:
+    app: elasticsearch
+  ports:
+  - name: http
+    port: 9200
+    targetPort: 9200
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: elasticsearch-headless
+  namespace: logging
+spec:
+  clusterIP: None
+  selector:
+    app: elasticsearch
+  ports:
+  - name: http
+    port: 9200

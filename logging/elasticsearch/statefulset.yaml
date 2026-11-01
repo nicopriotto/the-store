@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: elasticsearch
+  namespace: logging
+spec:
+  serviceName: elasticsearch-headless
+  replicas: 1
+  selector:
+    matchLabels:
+      app: elasticsearch
+  template:
+    metadata:
+      labels:
+        app: elasticsearch
+    spec:
+      # Usuario de la imagen (1000:0); runAsNonRoot impide arrancarlo como root
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 0
+        runAsNonRoot: true
+        fsGroup: 1000
+      containers:
+      - name: elasticsearch
+        image: docker.elastic.co/elasticsearch/elasticsearch:8.19.7
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        env:
+        - name: discovery.type
+          value: single-node
+        - name: cluster.name
+          value: the-store-logs
+        - name: xpack.security.enabled
+          value: "true"
+        - name: xpack.security.http.ssl.enabled
+          value: "false"
+        - name: xpack.security.transport.ssl.enabled
+          value: "false"
+        # Evita depender de vm.max_map_count en la VM de Docker
+        - name: node.store.allow_mmap
+          value: "false"
+        - name: ES_JAVA_OPTS
+          value: "-Xms1g -Xmx1g"
+        - name: ELASTIC_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: es-credentials
+              key: elastic
+        ports:
+        - name: http
+          containerPort: 9200
+        # Por TCP: un httpGet sin credenciales recibe 401
+        readinessProbe:
+          tcpSocket:
+            port: 9200
+          initialDelaySeconds: 20
+          periodSeconds: 10
+        livenessProbe:
+          tcpSocket:
+            port: 9200
+          initialDelaySeconds: 90
+          periodSeconds: 20
+          failureThreshold: 6
+        resources:
+          requests:
+            cpu: 500m
+            memory: 2Gi
+          limits:
+            memory: 2Gi
+        volumeMounts:
+        - name: data
+          mountPath: /usr/share/elasticsearch/data
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: standard
+      resources:
+        requests:
+          storage: 5Gi
