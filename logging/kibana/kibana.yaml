@@ -38,6 +38,11 @@ spec:
               key: kibana_system
         - name: SERVER_PUBLICBASEURL
           value: http://kibana.localhost
+        # Sin telemetría ni el aviso de "Usage collection" en cada pantalla
+        - name: TELEMETRY_OPTIN
+          value: "false"
+        - name: TELEMETRY_ALLOWCHANGINGOPTINSTATUS
+          value: "false"
         # Sin esta clave, varias APIs internas de Kibana responden 500
         - name: XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY
           valueFrom:
