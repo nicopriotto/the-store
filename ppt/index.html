@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Logs de The Store</title>
+<meta name="token" content="__TOKEN__">
+<meta name="kibana-port" content="__KIBANA_PORT__">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;700;800;900&family=Nunito:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="/viewport-base.css">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<div class="deck-viewport">
+  <main class="deck-stage" id="stage">
+
+    <!-- === DIAPOSITIVAS COMUNES === -->
+    <section class="slide" id="slide"></section>
+
+    <!-- === ESPACIO DEL CLÚSTER: el clúster real, navegable === -->
+    <section class="slide cluster" id="cluster">
+      <aside class="brief">
+        <span class="mark"></span>
+        <span class="eyebrow" id="cl-eyebrow"></span>
+        <h2 id="cl-h"></h2>
+        <p id="cl-text"></p>
+        <ol class="steps" id="cl-actions"></ol>
+        <div class="counter" id="counter" hidden>
+          <span class="big" id="counter-n">0</span>
+          <span>comandos para encontrar un error</span>
+        </div>
+      </aside>
+
+      <div class="space" id="space">
+        <svg id="world" class="world" viewBox="0 0 1360 1080" aria-label="Mapa del clúster">
+          <defs>
+            <pattern id="grid" width="85" height="90" patternUnits="userSpaceOnUse">
+              <path d="M85 0H0V90" fill="none" stroke="#ececea" stroke-width="1"></path>
+            </pattern>
+          </defs>
+          <rect class="bg" x="-4000" y="-4000" width="9360" height="9080" fill="url(#grid)"></rect>
+          <g id="cam">
+            <g id="l-nodes"></g>
+            <g id="l-links"></g>
+            <g id="l-svcs"></g>
+            <g id="l-pods"></g>
+            <g id="l-pulses"></g>
+          </g>
+        </svg>
+
+        <div class="space-tools">
+          <button class="chip" id="btn-kibana" hidden>Kibana</button>
+        </div>
+
+        <div class="legend">
+          <span><i class="lg pod"></i>pod de la tienda</span>
+          <span><i class="lg efk"></i>pod de EFK</span>
+          <span><i class="lg sys"></i>control-plane</span>
+          <span><i class="lg svc"></i>Service</span>
+          <span><i class="lg err"></i>con errores</span>
+        </div>
+
+        <div class="receipt" id="receipt" hidden>
+          <div class="r-head"><b>Cliente</b><span id="client-state">navegador</span></div>
+          <ol id="receipt-list"></ol>
+        </div>
+
+        <p class="space-msg" id="space-msg" hidden></p>
+
+        <div class="zoom" role="group" aria-label="Zoom del mapa">
+          <button id="zoom-in" title="Acercar">+</button>
+          <button id="zoom-out" title="Alejar">−</button>
+          <button id="zoom-home" title="Ver todo">⤢</button>
+        </div>
+
+        <div class="kibana" id="kibana" hidden>
+          <div class="kb-bar">
+            <b>Kibana</b>
+            <span id="kb-where"></span>
+            <div class="kb-links" id="kb-links"></div>
+            <div class="kb-zoom" role="group" aria-label="Zoom de Kibana"><button class="chip" id="kb-zoom-out" title="Achicar">−</button><span id="kb-zoom-v">100%</span><button class="chip" id="kb-zoom-in" title="Agrandar">+</button></div>
+            <button class="chip" id="kb-close">Cerrar</button>
+          </div>
+          <div class="kb-view"><iframe id="kb-frame" title="Kibana"></iframe></div>
+        </div>
+
+        <div class="dock" id="dock" hidden>
+          <div class="dock-tabs" id="dock-tabs" role="tablist"></div>
+          <div class="dock-body" id="dock-body"></div>
+        </div>
+
+        <div class="popover" id="popover" hidden></div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<!-- === CONTROLES DE LA PRESENTACIÓN (fuera del lienzo) === -->
+<nav class="deck-controls" aria-label="Navegación">
+  <button id="prev" aria-label="Anterior">←</button>
+  <span id="pos"></span>
+  <button id="next" aria-label="Siguiente">→</button>
+</nav>
+
+<aside class="notes" id="notes" hidden>
+  <span>Notas para quien presenta · N para ocultar</span>
+  <div id="notes-body"></div>
+</aside>
+
+<script src="/app.js"></script>
+<script src="/scenes.js"></script>
+</body>
+</html>
